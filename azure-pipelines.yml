@@ -1,0 +1,110 @@
+variables:
+  - group: "AWS Credentials"
+  - name: AWSAccessId
+    value: $[variables.AWS_ACCESS_KEY_ID]
+  - name: AWSAccessSecret
+    value: $[variables.AWS_SECRET_ACCESS_KEY]
+  - name: AWSRegion
+    value: $[variables.AWS_REGION]
+
+trigger:
+  branches:
+    include:
+      - master
+  paths:
+    include:
+      - "*"
+    exclude:
+      - README.md
+      - azure-pipelines.yml
+
+jobs:
+  - job: Update_or_create_lambda_function
+    pool:
+      vmImage: "ubuntu-latest"
+    steps:
+      - checkout: self
+        persistCredentials: true
+        clean: true
+        displayName: "Checking out branch"
+
+      # Get hash from last merged commit and verify which directory (function) was affected
+      - bash: |
+          function=$(git diff --dirstat=files,0 HEAD~1 | egrep \([a-zA-Z]\+\) -o)
+          echo "##vso[task.setvariable variable=functionName]$function"
+        displayName: Identifying function
+
+      - bash: |
+          echo Zipping function code
+          zip -r -j $(Agent.TempDirectory)/function.zip ./$(functionName)/* || exit
+
+          echo function code successfully zipped
+
+        displayName:
+          "Zipping function code"
+
+          # Curl and install aws cli version 2
+      - bash: |
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install
+          aws --version
+        displayName: "Installing AWS Cli"
+
+      - bash: |
+          aws configure set aws_access_key_id $(AWSAccessId)
+          aws configure set aws_secret_access_key $(AWSAccessSecret)
+          aws configure set default.region $(AWSRegion)
+
+        displayName: "Configuring CLI Credentials"
+
+      - bash: |
+          getFunctionResult=$(aws lambda get-function --function-name $(functionName) 2>&1)
+
+          # Check if the command was successful (exit code 0)
+          if [ $? -eq 0 ]; then
+
+            echo "Lambda function $(functionName) found. Starting update process..."
+
+            aws lambda update-function-code \
+            --function-name  $(functionName) \
+            --zip-file fileb://$(Agent.TempDirectory)/function.zip
+
+            echo "Function $(functionName) successfully updated. Verify your AWS Account to confirm its contents."
+
+          else
+
+            echo "Lambda function $(functionName) does not exist. Initiating creation process..."
+            echo "Creating IAM Role..."
+
+            roleName=$(functionName)-role
+
+            roleARN=$(aws iam create-role --role-name $roleName --assume-role-policy-document '{"Version": "2012-10-17","Statement": [{ "Effect": "Allow", "Principal": {"Service": "lambda.amazonaws.com"}, "Action": "sts:AssumeRole"}]}' --output json --query 'Role.Arn' | tr -d '"')
+
+            echo $roleARN
+
+            sleep 5s
+
+            echo "Role successfully created. Attaching basic execution pocilies to it..."
+
+            policyOne="arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+            policyTwo="arn:aws:iam::aws:policy/service-role/AWSLambdaRole"
+
+            aws iam attach-role-policy --role-name $roleName --policy-arn $policyOne
+            aws iam attach-role-policy --role-name $roleName --policy-arn $policyTwo
+
+            sleep 5s
+            
+            echo "Policies successfully attached to role. Creating function..."
+
+            aws lambda create-function \
+            --function-name $(functionName) \
+            --runtime nodejs16.x \
+            --zip-file fileb://$(Agent.TempDirectory)/function.zip \
+            --handler index.handler \
+            --role $roleARN
+
+            echo "Function $(functionName) successfully created. Verify your AWS Account to confirm its contents."
+
+          fi
+        displayName: Creating / Updating function
