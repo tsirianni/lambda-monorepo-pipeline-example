@@ -32,4 +32,14 @@ Utiliza as variáveis de ambiente com as credenciais para acessar a conta da AWS
 
 ### Criação/Edição da Lambda
 
-Aqui é onde fica interessante...
+Aqui é onde fica interessante. Antes de saber qual ação tomar (criar ou editar) uma chamada para a aws é feita para verificar se já existe uma lambda com o nome do repositório. Caso já exista, ela é atualizada com o código atualizado, que foi zipado e armazenado temporariamente na máquina virtual da pipeline. Caso não exista, um novo  _IAM role_ é criado, políticas básicas de execução são adicionadas à esse role, permitindo que a função possa assumir a role e adicionar logs ao serviço CloudWatch (acesso configurado na política "AWSLambdaBasicExecutionRole", gerenciada pela AWS). Por fim, após a criação das permissões necessárias, a função é criada.
+
+Pode-se perceber que em alguns pontos neste script eu pauso a execusão por 5 segundos. Isso é proposital e necessário. Sem esta pausa, a criação da Lambda gera um erro, pois não reconhece o role passado a ela, já que não teve tempo das alterações serem propagadas pela sua conta na AWS. Este pequeno intervalo de 5s permite que o role seja criado e reconhecido pelos demais serviços antes de ser utilizado (o que foi super divertido de descobrir haha).
+
+# Comentários
+
+Sinceramente não acho que a identificação da lambda pelo commando git diff seja a melhor opção (acho que pessoalmente até iria argumentar a favor de um repo por lambda), mas é uma opção interessante para uma primeira implementação de CI nas lambdas.
+
+Porém, esse pequeno projeto foi uma experiência muito bacana com algumas ferramentas. Pude ter um primeiro entendimento de como as pipelines do Azure funcionam e algum contato com bash scripting. Sinta-se a vontade para utilizar este código e modificá-lo como precisar. Também aceito sugestões de melhoria, refatoração e/ou diferentes abordagens possíveis.
+
+
